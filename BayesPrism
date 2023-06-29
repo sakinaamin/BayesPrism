@@ -1,0 +1,60 @@
+setwd("/gpfs3/well/immune-rep/users/wph959/cibersort/")
+library(Seurat)
+library(BayesPrism)
+#input 1 - bulk RNA seq (rows as samples, columns as genes)
+x <- read.delim("/gpfs3/well/immune-rep/users/wph959/pan-cancer/PDAC_raw_unique_GEX.txt", header=T)
+rownames(x) <- x$gene
+x$gene <- NULL
+x <- t(x)
+
+merged = readRDS("/gpfs3/well/immune-rep/users/wph959/cibersort/merged_all_cells_PDAC150K_PENGSTEELE.rds")
+
+set.seed(120)
+n <- 50000
+total_cells <- ncol(merged@assays$RNA@counts)
+include <- sample(1:total_cells, n)
+include <- include[!is.na(merged@meta.data$refined_annotations[include])]
+while (length(include) < n) {
+  additional_cells <- sample(setdiff(1:total_cells, include), n - length(include))
+  include <- c(include, additional_cells[!is.na(merged@meta.data$refined_annotations[additional_cells])])
+}
+
+new <- merged@assays$RNA@counts[, include]
+metadata <- merged@meta.data[include, ]
+
+metadata$state <- paste(metadata$orig.ident,  sep="_", metadata$refined_annotations)
+cell.state.labels<- metadata$state
+state_counts <- table(metadata$state)
+valid_values <- names(state_counts[state_counts >= 50])
+metadata <- metadata[metadata$state %in% valid_values, ]
+
+cell.type.labels <- metadata$refined_annotations
+new <- new[,colnames(new) %in% rownames(metadata)]
+
+sc.dat <- as.data.frame(new)
+sc.dat <- t(sc.dat)
+sc.dat <- as.data.frame(sc.dat)
+
+sc.dat.filtered <- cleanup.genes (input=sc.dat,
+                                  input.type="count.matrix",
+                                  species="hs", 
+                                  gene.group=c( "Rb","Mrp","other_Rb","chrM","MALAT1","chrX","chrY") ,
+                                  exp.cells=5)
+
+myPrism <- new.prism(
+  reference=sc.dat.filtered, 
+  mixture=x,
+  input.type="count.matrix", 
+  cell.type.labels = cell.type.labels, 
+  cell.state.labels = cell.state.labels,
+  key=NULL,
+  outlier.cut=0.01,
+  outlier.fraction=0.1,
+)
+
+bp.res <- run.prism(prism = myPrism, n.cores=10)
+save(bp.res, file="/gpfs3/well/immune-rep/users/wph959/cibersort/all_cells.rdata")
+
+theta <- get.fraction (bp=bp.res,
+                       which.theta="final",
+                       state.or.type="type")
