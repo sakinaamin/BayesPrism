@@ -41,7 +41,6 @@ total = cbind(rowSums(B_cells),rowSums(T_cells), rowSums(Myeloid_cells), rowSums
 colnames(total) = gsub("_"," ",c("B_cells","T_cells","Myeloid_cells", "NK_cells"), fixed = T)
 proportional = cbind(total, B_cells1,T_cells1,Myeloid_cells1, NK_cells1)
 
-##need to remove column 5 - why???
 
 concat = function(v) {
   res = ""  
