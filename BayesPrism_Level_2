@@ -1,0 +1,98 @@
+setwd("/gpfs3/well/immune-rep/users/wph959/cibersort/")
+library(Seurat)
+library(BayesPrism)
+#input 1 - bulk RNA seq (rows as samples, columns as genes)
+x <- read.delim("/gpfs3/well/immune-rep/users/wph959/pan-cancer/PDAC_raw_unique_GEX.txt", header=T)
+rownames(x) <- x$gene
+x$gene <- NULL
+x <- t(x)
+
+merged = readRDS("/gpfs3/well/immune-rep/users/wph959/cibersort/merged_all_cells_PDAC150K_PENGSTEELE.rds")
+merged@meta.data$Level_2 <- NA
+#merged@meta.data$Level_2[!(merged@meta.data$Level_2 %in% c("B cell naive", "B cell ASC"))] <- "B cell antigen experienced"
+merged@meta.data$Level_2[grep("B cell activated pre-memory", merged$refined_annotations)] <- "B cell antigen experienced"
+merged@meta.data$Level_2[grep("B cell GC", merged$refined_annotations)] <- "B cell antigen experienced"
+merged@meta.data$Level_2[grep("B cell LZ GC", merged$refined_annotations)] <- "B cell antigen experienced"
+merged@meta.data$Level_2[grep("B cell memory", merged$refined_annotations)] <- "B cell antigen experienced"
+merged@meta.data$Level_2[grep("B cell MZ", merged$refined_annotations)] <- "B cell antigen experienced"
+merged@meta.data$Level_2[grep("B cell GZMB", merged$refined_annotations)] <- "B cell antigen experienced"
+merged@meta.data$Level_2[grep("B cell naive", merged$refined_annotations)] <- "B cell naive"
+merged@meta.data$Level_2[grep("B cell  plasma", merged$refined_annotations)] <- "B cell ASC"
+merged@meta.data$Level_2[grep("DC CD207", merged$refined_annotations)] <- "DC DC2"
+merged@meta.data$Level_2[grep("DC cDC", merged$refined_annotations)] <- "DC DC2"
+merged@meta.data$Level_2[grep("DC CLEC9A", merged$refined_annotations)] <- "DC DC1"
+merged@meta.data$Level_2[grep("DC DC2", merged$refined_annotations)] <- "DC DC2"
+merged@meta.data$Level_2[grep("DC pDC", merged$refined_annotations)] <- "DC pDC"
+merged@meta.data$Level_2[grep("DC moDC", merged$refined_annotations)] <- "DC moDC"
+merged@meta.data$Level_2[grep("DC mreg", merged$refined_annotations)] <- "DC mregDC"
+merged@meta.data$Level_2[grep("monocyte", merged$refined_annotations)] <- "Monocytes"
+merged@meta.data$Level_2[grep("momac", merged$refined_annotations)] <- "Momac"
+merged@meta.data$Level_2[grep("granulocyte", merged$refined_annotations)] <- "granulocyte"
+merged@meta.data$Level_2[grep("Mast", merged$refined_annotations)] <- "Mast"
+merged@meta.data$Level_2[grep("megakaryocyte", merged$refined_annotations)] <- "megakaryocyte"
+merged@meta.data$Level_2[grep("CD4", merged$refined_annotations)] <- "CD4"
+merged@meta.data$Level_2[grep("CD8", merged$refined_annotations)] <- "CD8"
+merged@meta.data$Level_2[grep("gdT", merged$refined_annotations)] <- "gdT"
+merged@meta.data$Level_2[grep("MAIT", merged$refined_annotations)] <- "MAIT"
+merged@meta.data$Level_2[grep("NK", merged$refined_annotations)] <- "NK-like cell"
+merged@meta.data$Level_2[grep("ILC", merged$refined_annotations)] <- "ILC"
+merged@meta.data$Level_2[grep("Acinar", merged$cell_type_refined)] <- "Acinar"
+merged@meta.data$Level_2[grep("Centroacinar", merged$cell_type_refined)] <- "Centroacinar"
+merged@meta.data$Level_2[grep("Ductal", merged$cell_type_refined)] <- "Epithelial"
+merged@meta.data$Level_2[grep("Endocrine", merged$cell_type_refined)] <- "Endocrine"
+merged@meta.data$Level_2[grep("Fibroblast", merged$cell_type_refined)] <- "Fibroblast"
+merged@meta.data$Level_2[grep("Endothelial", merged$cell_type_refined)] <- "Endothelial cell"
+merged@meta.data$Level_2[grep("Stellate", merged$cell_type_refined)] <- "Stellate cell"
+#merged@meta.data$Level_2[!(merged@meta.data$Level_2 %in% c("DC moDC", "DC pDC"))] <- "DC"
+table(merged@meta.data$Level_2)
+
+set.seed(120)
+n <- 50000
+total_cells <- ncol(merged@assays$RNA@counts)
+include <- sample(1:total_cells, n)
+include <- include[!is.na(merged@meta.data$Level_2[include])]
+while (length(include) < n) {
+  additional_cells <- sample(setdiff(1:total_cells, include), n - length(include))
+  include <- c(include, additional_cells[!is.na(merged@meta.data$Level_2[additional_cells])])
+}
+
+new <- merged@assays$RNA@counts[, include]
+metadata <- merged@meta.data[include, ]
+
+metadata$state <- paste(metadata$orig.ident,  sep="_", metadata$Level_2)
+cell.state.labels<- metadata$state
+state_counts <- table(metadata$state)
+valid_values <- names(state_counts[state_counts >= 50])
+metadata <- metadata[metadata$state %in% valid_values, ]
+
+cell.state.labels<- metadata$state
+cell.type.labels <- metadata$Level_2
+new <- new[,colnames(new) %in% rownames(metadata)]
+
+sc.dat <- as.data.frame(new)
+sc.dat <- t(sc.dat)
+sc.dat <- as.data.frame(sc.dat)
+
+sc.dat.filtered <- cleanup.genes (input=sc.dat,
+                                  input.type="count.matrix",
+                                  species="hs", 
+                                  gene.group=c( "Rb","Mrp","other_Rb","chrM","MALAT1","chrX","chrY") ,
+                                  exp.cells=5)
+
+myPrism <- new.prism(
+  reference=sc.dat.filtered, 
+  mixture=x,
+  input.type="count.matrix", 
+  cell.type.labels = cell.type.labels, 
+  cell.state.labels = cell.state.labels,
+  key=NULL,
+  outlier.cut=0.01,
+  outlier.fraction=0.1,
+)
+
+bp.res <- run.prism(prism = myPrism, n.cores=10)
+save(bp.res, file="/gpfs3/well/immune-rep/users/wph959/cibersort/all_cells_Level_2.rdata")
+
+theta <- get.fraction (bp=bp.res,
+                       which.theta="final",
+                       state.or.type="type")
