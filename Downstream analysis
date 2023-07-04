@@ -1,0 +1,354 @@
+library(plyr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+load("all_cells.rdata")
+
+theta <- get.fraction (bp=bp.res,
+                       which.theta="final",
+                       state.or.type="type")
+
+theta <- as.data.frame(theta)
+
+#B_cells <- theta %>%  select("B cell  plasma cell", "B cell  plasmablast", "B cell memory", "B cell memory activated", "B cell naive") 
+#Myeloid_cells <- theta %>% select("Mast", "Mast activated","momac FOLR2" ,"monocyte CD14", "monocyte CD14 FOLR3lo",    
+#"monocyte CD14CD16", "monocyte CD16", "momac TREM2", "momac PLIN2" )
+#T_cells <- theta %>% select("T cell CD4 CM", "T cell CD4 Naive",  "T cell CD4 Senescent" ,   "T cell CD4 Tfh" ,          
+#                            "T cell CD4 Th1",   "T cell CD4 Th17",    "T cell CD4 Th2",  "T cell CD4 Treg",  "T cell CD4 Treg Activated", 
+#                            "T cell CD8 EM", "T cell CD8 EM Activated", "T cell CD8 EMRA", "T cell CD8 Exhausted",  "T cell CD8 Naive",  
+#                            "T cell CD8 Senescent")
+#NK_cells <- theta %>% select("NK cell NK active", "NK cell NK mature")
+
+B_cells <- theta %>% select(matches("B cell"))
+Myeloid_cells <- theta %>% select(starts_with("monocyte"), starts_with("momac"), starts_with("Mast"))
+T_cells <- theta %>% select(matches("T cell"))
+NK_cells <- theta %>% select(matches("NK cell"))
+
+B_cells1= B_cells
+T_cells1= T_cells
+Myeloid_cells1 = Myeloid_cells
+NK_cells1 = NK_cells
+
+for(i in c(1:length(B_cells[,1]))){
+  B_cells1[i,] = B_cells[i,]*100/sum(B_cells[i,])
+  T_cells1[i,] = T_cells[i,]*100/sum(T_cells[i,])
+  Myeloid_cells1[i,] = Myeloid_cells[i,]*100/sum(Myeloid_cells[i,])
+  NK_cells1[i,] = NK_cells[i,]*100/sum(NK_cells[i,])
+}
+
+total = cbind(rowSums(B_cells),rowSums(T_cells), rowSums(Myeloid_cells), rowSums(NK_cells))*100
+colnames(total) = gsub("_"," ",c("B_cells","T_cells","Myeloid_cells", "NK_cells"), fixed = T)
+proportional = cbind(total, B_cells1,T_cells1,Myeloid_cells1, NK_cells1)
+
+##need to remove column 5 - why???
+
+concat = function(v) {
+  res = ""  
+  for (i in 1:length(v)){res = paste(res,v[i],sep="")}  
+  res
+}  
+
+add.alpha <- function(col, alpha=1){
+  if(missing(col))
+    stop("Please provide a vector of colours.")
+  apply(sapply(col, col2rgb)/255, 2, 
+        function(x) 
+          rgb(x[1], x[2], x[3], alpha=alpha))}
+
+list_normalised = c(list(total), list(B_cells1),list(T_cells1),list(Myeloid_cells1),list(NK_cells1))
+ids = rownames(theta)
+names(list_normalised) = apply(cbind("% of ", gsub("_"," ",c("all immune","B_cells","T_cells","Myeloid_cells","NK_cells"), fixed = T)), 1, paste, collapse = "")
+for(i in c(1:length(list_normalised))){
+  m = list_normalised[[i]]
+  rownames(m) = ids
+  list_normalised[[i]] = m
+}
+
+# then split patients by B/T cell and myeloid levels
+#x = rowSums(total[,c("B cells","T cells")])
+x = total[,"Myeloid cells"]
+group1 = ids[which(x <= quantile(x, 0.5))]
+group2 = ids[which(x > quantile(x, 0.5))]
+
+groups_PCA = c(list(group1), list(group2))
+############################################ plot PCA of CD45 %s
+
+Plot_PCA<-function(list_normalised){
+  all_proportions = (list_normalised[["% of all immune"]])
+  type_to_plot = "PDAC tissue"
+  
+  x <- princomp(all_proportions,dim=2)
+  PCA_coordinates_sub = x$scores
+  
+  x1 = x$scores[,1]
+  x2 = x$scores[,2]
+  
+  y1 = x$loadings[,1]
+  y2 = x$loadings[,2]
+  
+  factor1 = rep(0,length(x1))
+  names(factor1) = names(x1)
+  factor1[group1] = 1
+  factor1[group2] = 2
+  factor2 = gsub("-biopsy","",names(x1))
+  
+  factors1 = sort(unique(factor1))
+  factors2 = sort(unique(factor2))
+  matching1 = match(factor1, factors1)
+  matching2 = match(factor2, factors2)
+  
+  library(RColorBrewer)
+  cols =  add.alpha (brewer.pal(6, "Dark2"), alpha = 0.95)
+  cols1 = add.alpha (c( cols[1],"white"),alpha = 0.5)
+  cols2 =  add.alpha (cols, alpha = 0.5)
+  
+  cols1 =  add.alpha (brewer.pal(8, "Dark2")[c(2,8)], alpha = 0.95)
+  cols =  add.alpha (cols1, alpha = 0.5)
+  cols2 =  add.alpha (cols, alpha = 0.5)
+  
+  pches = c(21:25)
+  fileout1=concat(c("BayesPrism1.pdf"))
+  w=2.2
+  pdf(file=fileout1, height=w*1, width=w*3)
+  par(mfrow= c(1,3), mar = c(5,5,3,3))
+  
+  plot(x1,x2,pch = pches[matching1], col = cols[matching1],bg = cols2[matching1], main = "all cells", xlab = "PCA1", ylab = "PCA2", cex = 1,lwd = 2, xlim = range(x1*1.1), ylim = range(x2*1.1))
+  
+  xy = cbind(x1,x2)
+  library(car)
+  for(pca in c(1:length(groups_PCA))){
+    w = which(factor1 ==pca)
+    if(length(w)>1){
+      x = xy[w,1]
+      y = xy[w,2]
+      dataEllipse(x, y, levels=c(0.65), add = TRUE, col = cols2[pca], center.cex = 0.0001, fill =T, fill.alpha =0.1 , plot.points = FALSE)
+    }
+  }
+  
+  plot(x1,x2,pch = pches[matching1], col = "white",bg = "white", main = "all cells", xlab = "PCA1", ylab = "PCA2", cex = 1,lwd = 2, xlim = range(x1*1.1), ylim = range(x2*1.1))
+  legend("topleft", paste("group",factors1), pch = pches,cex= 0.8, bty="n", pt.bg = cols2, col = cols, pt.lwd = 2, text.font = 2)
+  
+  plot(x1,x2,pch = pches[matching1], col = cols[matching1],bg = cols2[matching1], main = "all cells", xlab = "PCA1", ylab = "PCA2", cex = 1,lwd = 2, xlim = range(x1*1.1), ylim = range(x2*1.1))
+  text(x1, y = x2, labels = factor2,cex = 0.4,font = 1)
+  
+  dev.off()
+}
+
+Plot_PCA(list_normalised)
+
+############################################ plot boxplots of cell %s in tumour between groups
+
+Draw_box_plot<-function(box,x,width,c,lwd,line_col){
+  segments(x, box[2], x, box[3], col = line_col,lwd =lwd)
+  segments(x-(width/2), box[2], x+(width/2), box[2], col = line_col,lwd =lwd)
+  segments(x-(width/2), box[3], x+(width/2), box[3], col = line_col,lwd =lwd)
+  rect(x-width, box[4], x+width, box[5], col = c,lwd =lwd, border = line_col)
+  segments(x-width, box[1], x+width, box[1], col = line_col,lwd=2*lwd)}
+
+
+Plot_tumour_cell_composition_between_groups<-function(list_normalised){
+  fileout1=concat(c("Bayesprism2.pdf"))
+  w=3.35
+  pdf(file=fileout1, height=w*1*6, width=w*3*2.9)
+  par(mfrow= c(6,2), mar = c(16,5,2,3))
+  
+  summary_tables = NULL
+  analysis1 = "cell_proportions"
+  library(RColorBrewer)
+  cols1 =  add.alpha (brewer.pal(8, "Dark2")[c(2,8)], alpha = 0.95)
+  cols =  add.alpha (cols1, alpha = 0.5)
+  
+  for(c in c(1:length(list_normalised))){
+    mat = list_normalised[[c]]
+    name = names(list_normalised)[c]
+    analysis = concat(c(analysis1,"_", name))	
+    mat_stat = mat
+    for(i in c(1:length(mat[1,]))){
+      w = which(mat[,i]==-1)
+      mat_stat[w,i] =NA
+    }
+    
+    mat_biopsy = mat_stat[unlist(groups_PCA),]
+    
+    group_PCA_list = NULL
+    factor_PCA = NULL
+    for(i in c(1:length(groups_PCA))){
+      group_PCA_list = c(group_PCA_list, groups_PCA[[i]])
+      factor_PCA = c(factor_PCA, rep(i, length(groups_PCA[[i]])))
+    }
+    w = which(is.na(mat_biopsy[,1])==F)
+    mat_biopsy = mat_biopsy[w,]
+    factor_PCA = factor_PCA[w]
+    group_PCA_list = group_PCA_list[w]
+    mat_biopsy = mat_biopsy[,which(colSums(mat_biopsy)>0)]
+    
+    mat1 = as.matrix(mat_biopsy[group_PCA_list,])
+    factor = factor(factor_PCA)
+    fit = manova(formula = mat1 ~ factor)
+    p1 = summary.aov(fit)
+    nam = gsub(" Response ","",names(p1))
+    p_value = NULL
+    means = NULL
+    
+    Means_factor = function(factor, x){
+      m = NULL
+      sd = NULL
+      for(i1 in c(1:length(levels(factor)))){
+        x1 = x[which(factor==levels(factor)[i1])]
+        x1 = x1[which(x1!=-1)]
+        sd = c(sd, sd(x1))
+        m = c(m, mean(x1))}
+      return(c(m, sd))}
+    i1 = 0
+    for(i in p1){
+      i1 = i1+1
+      p_value = c(p_value, i$'Pr(>F)'[1]) 
+      if(length(mean)==0){means = Means_factor(factor, mat1[,i1])
+      }else{means = rbind(means, Means_factor(factor, mat1[,i1]))}
+    }
+    p_value[which(is.na(p_value))] = 2
+    colnames(means) = c(paste("mean.group.", c(1:length(levels(factor)))), paste("sd.group.", c(1:length(levels(factor)))))
+    combined_p_value = cbind(p_value ,means)
+    rownames(combined_p_value) = nam
+    p.site = rep("biopsy", length(nam))
+    p.analysis = rep(analysis, length(nam))
+    x = cbind(p.site, p.analysis, combined_p_value)
+    if(length(summary_tables)==0){summary_tables = x
+    }else{summary_tables = rbind(summary_tables ,x)}
+    
+    groups = NULL
+    mat = mat_biopsy[,which(colSums(mat_biopsy)>0)]
+    p_values = combined_p_value[,1]
+    for(i in c(1:length(mat[1,]))){
+      g1 = NULL
+      data = NULL
+      factor = NULL
+      for(g in c(1:length(groups_PCA))){
+        x = mat [groups_PCA[[g]], i]
+        x = x[which(is.na(x)==F)]
+        data = c(data, x)
+        factor = c(factor, rep(g, length(x)))
+        g1 = c(g1, list(x))}
+      groups = c(groups, list(g1))
+    }
+    factors1 = paste("group",c(1:length(groups_PCA)))
+    factors = gsub("_"," ",colnames(mat))
+    main = concat(c(name))
+    max = max(c(unlist(groups), unlist(groups))*1.35)
+    min = 0
+    b = (max-min)*0.034
+    ylab = ""
+    draw_signif_lines = TRUE
+    y = max(c(unlist(groups), unlist(groups))*1)+b
+    max_width = 40
+    max_scale = min(c(max, 100))
+    range = max-min
+    if(range>55){scale = c(0:100)*20}
+    if(range<=55){scale = c(0:100)*10}
+    if(range<=40){scale = c(0:100)*5}
+    if(range <10){scale = c(0:100)*2.5}
+    if(range <5){scale = c(0:100)*1}
+    if(range <4){scale = c(0:100)*0.5}
+    if(range <1.5){scale = c(0:1000)*0.2}
+    if(range <0.5){scale = c(0:100)*0.1}
+    if(range <0.1){scale = c(0:100)*0.01}
+    if(range <0.01){scale = c(0:100)*0.001}
+    cex = 0.9
+    Fun<-function(x){x}
+    scale = scale[intersect(which(scale<= max_scale), which(scale>=min))]
+    plot(c(1.5, max_width +0.5),c(min, max), pch=20, col="white",xlab="",ylab ="",cex=cex, cex.lab=cex+0.1,	cex.axis=cex,cex.main = cex, col.axis = "white",tck=0, mgp = c(2,0,0), main = main, axes = FALSE, ylim = c(min, max))
+    mtext(side = 2, text = ylab, line = 2.8,cex= cex-0.1, las = 3, font = 1)
+    mtext(side = 1, text = factors, line = 0.35,cex= cex-0.1,  at = c(1:length(factors)), las = 2, font = 1)
+    segments(0.5,Fun(scale),length(groups)+0.5,Fun(scale),col = "grey",lwd = 1,lty = 3 )
+    mtext(side = 2, text = scale, line = 0.15,cex= cex-0.1,  at =Fun(scale), las = 2, font = 1)
+    width = 0.18
+    index = 1
+    l = length(groups)
+    l1 = length(groups[[1]])
+    shift = c(1:l1)
+    shift = (mean(shift)-shift)
+    shift = shift*0.25/max(shift)
+    
+    for(i in c(1:l)){
+      for(i1 in c(1:l1)){
+        points1=as.numeric(groups[[i]][[i1]])
+        box1<-c(as.numeric(quantile(points1))[3], as.numeric(quantile(points1, probs = c(0.1, 0.9))), as.numeric(quantile(points1))[c(2, 4)])	
+        Draw_box_plot(box1,i-shift[i1],width,cols[i1],1, cols1[i1])
+        points(rep(i-shift[i1], length(points1)),points1, pch =21, col=cols[i1],bg = cols[i1], cex = 0.7)
+      }}
+    
+    for(i in c(1:l)){	
+      b = max*0.035
+      signif_threshold = 0.05
+      if(p_values[i]<signif_threshold){
+        pval1 = "*"
+        # if(p_values[i] <signif_threshold/10){pval1 = "**"}
+        # if(p_values[i] <signif_threshold/100){pval1 = "***"}
+        y = max(unlist(groups[[i]]))
+        y = y+1*b
+        # segments(i-shift[1],y+b, i-shift[3],y+b,lwd = 3, col = "darkgrey")
+        text(i, y+2*b, labels = pval1, cex = 1.7)
+      }
+    }
+  }
+  
+  plot(c(0.5, max_width +0.5),c(min, max), pch=20, col="white",xlab="",ylab ="",cex=cex, cex.lab=cex+0.1,	cex.axis=cex,cex.main = cex, col.axis = "white",tck=0, mgp = c(2,0,0), main ='', axes = FALSE, ylim = c(min, max))
+  legend("topright", factors1, pch = 22,cex= 0.9, bty="n", pt.bg = add.alpha("white",alpha =0), col = add.alpha("white",alpha =0), text.col = cols1, text.font = 2)
+  dev.off()
+  return(summary_tables)
+}
+summary_tables = Plot_tumour_cell_composition_between_groups(list_normalised)
+
+
+
+Overall_correlation_of_cell_types<-function(total){
+  ##### Do you need to filter for just stage 2?
+  library(psych)
+  library(corrplot)
+  cortest = corr.test(total,adjust="holm")
+  pval = cortest $ p
+  rval = cortest $ r
+  fileout1=concat(c("Bayesprism_result1.pdf"))
+  w=2.8
+  pdf(file=fileout1, height=w*1.1, width=w*1.1)
+  par(mfrow= c(1,1), mar = c(5,5,5,5))
+  corrplot(rval, type="upper", p.mat=pval, insig="label_sig", tl.pos="td", sig.level=0.05, title =concat(c("broad annotations")), method = "ellipse", diag = F, order = "hclust")
+  dev.off()
+}
+
+Overall_correlation_of_cell_types(total)
+
+##### detailed correlation
+
+Detailed_correlation_of_cell_types<-function(proportional){
+  ##### Do you need to filter for just stage 2?
+  library(psych)
+  library(corrplot)
+  ### remove columns with zero SD
+  sd =apply(proportional, 2, sd)
+  proportional1 = proportional[,which(sd>0)]
+  cortest = corr.test(proportional1,adjust="holm")
+  pval = cortest $ p
+  rval = cortest $ r
+  
+  names1 = colnames(total)
+  names2 = setdiff(colnames(proportional1), names1)
+  pval = pval[names1,names2]
+  rval = rval[names1,names2]
+  fileout1=concat(c("Bayesprism_result.pdf"))
+  w=6
+  pdf(file=fileout1, height=w*1.1, width=w*1.1)
+  par(mfrow= c(1,1), mar = c(5,5,5,5))
+  corrplot(rval, p.mat=pval, insig="label_sig",  sig.level=0.05, title =concat(c("detailed annotations")), method = "ellipse")
+  dev.off()
+}
+
+Detailed_correlation_of_cell_types(proportional)
+
+
+
+
+
+
+
