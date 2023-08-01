@@ -58,3 +58,24 @@ save(bp.res, file="/gpfs3/well/immune-rep/users/wph959/cibersort/all_cells.rdata
 theta <- get.fraction (bp=bp.res,
                        which.theta="final",
                        state.or.type="type")
+
+
+###filter based on http://api.gdc.cancer.gov/data/1a7d7be8-675d-4e60-a105-19d4121bdebf 
+x <- read.delim("PAAD_anno.txt")
+x_false_rows <- x[x$Do_not_use == FALSE, ]
+convert_number <- function(x){
+  x <- as.character(x)
+  x <- gsub(pattern = ".", replacement = "-",x = x, fixed = TRUE)
+  return(x)
+}
+
+tt <- convert_number(rownames(theta))
+t1 <- cbind(patient_id=tt, theta)
+rownames(t1) = NULL
+rownames(t1) <- t1$patient_id
+t1$patient_id <- NULL
+
+subset_theta <- t1[rownames(t1) %in% x_false_rows$aliquot_barcode, ]
+
+save(subset_theta, file="PDAC_filtered_cell_fractions_Level_1.rda")
+
