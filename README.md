@@ -7,3 +7,5 @@ This allows users to:
 * **Prepare Bulk RNA-seq Data:** Format bulk RNA-seq data (e.g., TCGA_PAAD) for cell proportion estimation.
 * **Validate scRNA-seq Signatures:** Assess the enrichment of cell signatures derived from scRNA-seq data within bulk RNA-seq samples.
 * **Estimate Cell Proportions:** Facilitate the estimation of cell type proportions within bulk RNA-seq samples using appropriate deconvolution algorithms.
+
+Contact: sakina.amin@bioch.ox.ac.uk
